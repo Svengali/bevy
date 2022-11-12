@@ -91,6 +91,10 @@ pub enum RenderStage {
     Cleanup,
 }
 
+/// Resource for holding the extract stage of the rendering schedule
+#[derive(Resource)]
+pub struct ExtractStage(pub SystemStage);
+
 /// The simulation [`World`] of the application, stored as a resource.
 /// This resource is only available during [`RenderStage::Extract`] and not
 /// during command application of that stage.
@@ -192,6 +196,9 @@ impl Plugin for RenderPlugin {
             // after access to the main world is removed
             // See also https://github.com/bevyengine/bevy/issues/5082
             extract_stage.set_apply_buffers(false);
+            fn clear_entities(world: &mut World) {
+                world.clear_entities();
+            }
             render_app
                 .add_stage(RenderStage::Extract, extract_stage)
                 .add_stage(RenderStage::Prepare, SystemStage::parallel())
@@ -203,7 +210,10 @@ impl Plugin for RenderPlugin {
                         .with_system(PipelineCache::process_pipeline_queue_system)
                         .with_system(render_system.at_end()),
                 )
-                .add_stage(RenderStage::Cleanup, SystemStage::parallel())
+                .add_stage(
+                    RenderStage::Cleanup,
+                    SystemStage::parallel().with_system(clear_entities.at_end()),
+                )
                 .init_resource::<RenderGraph>()
                 .insert_resource(RenderInstance(instance))
                 .insert_resource(device)
@@ -253,80 +263,6 @@ impl Plugin for RenderPlugin {
                     // extract
                     extract(app_world, render_app);
                 }
-            }, |render_app| {
-                #[cfg(feature = "trace")]
-                let _render_span = bevy_utils::tracing::info_span!("render app").entered();
-                {
-                    #[cfg(feature = "trace")]
-                    let _stage_span =
-                        bevy_utils::tracing::info_span!("stage", name = "prepare").entered();
-
-                    // prepare
-                    let prepare = render_app
-                        .schedule
-                        .get_stage_mut::<SystemStage>(RenderStage::Prepare)
-                        .unwrap();
-                    prepare.run(&mut render_app.world);
-                }
-
-                {
-                    #[cfg(feature = "trace")]
-                    let _stage_span =
-                        bevy_utils::tracing::info_span!("stage", name = "queue").entered();
-
-                    // queue
-                    let queue = render_app
-                        .schedule
-                        .get_stage_mut::<SystemStage>(RenderStage::Queue)
-                        .unwrap();
-                    queue.run(&mut render_app.world);
-                }
-
-                {
-                    #[cfg(feature = "trace")]
-                    let _stage_span =
-                        bevy_utils::tracing::info_span!("stage", name = "sort").entered();
-
-                    // phase sort
-                    let phase_sort = render_app
-                        .schedule
-                        .get_stage_mut::<SystemStage>(RenderStage::PhaseSort)
-                        .unwrap();
-                    phase_sort.run(&mut render_app.world);
-                }
-
-                {
-                    #[cfg(feature = "trace")]
-                    let _stage_span =
-                        bevy_utils::tracing::info_span!("stage", name = "render").entered();
-
-                    // render
-                    let render = render_app
-                        .schedule
-                        .get_stage_mut::<SystemStage>(RenderStage::Render)
-                        .unwrap();
-                    render.run(&mut render_app.world);
-                }
-
-                {
-                    #[cfg(feature = "trace")]
-                    let _stage_span =
-                        bevy_utils::tracing::info_span!("stage", name = "cleanup").entered();
-
-                    // cleanup
-                    let cleanup = render_app
-                        .schedule
-                        .get_stage_mut::<SystemStage>(RenderStage::Cleanup)
-                        .unwrap();
-                    cleanup.run(&mut render_app.world);
-                }
-                {
-                    #[cfg(feature = "trace")]
-                    let _stage_span =
-                        bevy_utils::tracing::info_span!("stage", name = "clear_entities").entered();
-
-                    render_app.world.clear_entities();
-                }
             });
         }
 
@@ -336,6 +272,20 @@ impl Plugin for RenderPlugin {
             .add_plugin(ViewPlugin)
             .add_plugin(MeshPlugin)
             .add_plugin(GlobalsPlugin);
+    }
+
+    fn setup(&self, app: &mut App) {
+        // move stage to resource so render_app.run() doesn't run it.
+        let render_app = app.get_sub_app_mut(RenderApp).unwrap();
+
+        let stage = render_app
+            .schedule
+            .remove_stage(RenderStage::Extract)
+            .unwrap()
+            .downcast::<SystemStage>()
+            .unwrap();
+
+        render_app.world.insert_resource(ExtractStage(*stage));
     }
 }
 
@@ -347,10 +297,7 @@ struct ScratchMainWorld(World);
 /// Executes the [`Extract`](RenderStage::Extract) stage of the renderer.
 /// This updates the render world with the extracted ECS data of the current frame.
 fn extract(app_world: &mut World, render_app: &mut App) {
-    let extract = render_app
-        .schedule
-        .get_stage_mut::<SystemStage>(RenderStage::Extract)
-        .unwrap();
+    let mut extract = render_app.world.remove_resource::<ExtractStage>().unwrap();
 
     // temporarily add the app world to the render world as a resource
     let scratch_world = app_world.remove_resource::<ScratchMainWorld>().unwrap();
@@ -358,7 +305,7 @@ fn extract(app_world: &mut World, render_app: &mut App) {
     let running_world = &mut render_app.world;
     running_world.insert_resource(MainWorld(inserted_world));
 
-    extract.run(running_world);
+    extract.0.run(running_world);
     // move the app world back, as if nothing happened.
     let inserted_world = running_world.remove_resource::<MainWorld>().unwrap();
     let scratch_world = std::mem::replace(app_world, inserted_world.0);
@@ -367,5 +314,7 @@ fn extract(app_world: &mut World, render_app: &mut App) {
     // Note: We apply buffers (read, Commands) after the `MainWorld` has been removed from the render app's world
     // so that in future, pipelining will be able to do this too without any code relying on it.
     // see <https://github.com/bevyengine/bevy/issues/5082>
-    extract.apply_buffers(running_world);
+    extract.0.apply_buffers(running_world);
+
+    render_app.world.insert_resource(extract);
 }
