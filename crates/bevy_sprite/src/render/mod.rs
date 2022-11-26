@@ -10,10 +10,11 @@ use bevy_ecs::{
     prelude::*,
     system::{lifetimeless::*, SystemParamItem, SystemState},
 };
-use bevy_math::{Rect, Vec2};
+use bevy_math::{Rect, Vec2, Vec3};
 use bevy_reflect::Uuid;
 use bevy_render::{
     color::Color,
+    primitives::{Sphere},
     render_asset::RenderAssets,
     render_phase::{
         BatchedPhaseItem, DrawFunctions, EntityRenderCommand, RenderCommand, RenderCommandResult,
@@ -28,9 +29,9 @@ use bevy_render::{
         ComputedVisibility, ExtractedView, Msaa, ViewTarget, ViewUniform, ViewUniformOffset,
         ViewUniforms, VisibleEntities,
     },
-    Extract,
+    Extract, prelude::Camera, primitives::{Frustum, Plane},
 };
-use bevy_transform::components::GlobalTransform;
+use bevy_transform::{components::GlobalTransform, prelude::Transform};
 use bevy_utils::FloatOrd;
 use bevy_utils::HashMap;
 use bytemuck::{Pod, Zeroable};
@@ -313,9 +314,24 @@ pub fn extract_sprite_events(
     }
 }
 
+
+#[inline]
+pub fn intersects_sphere(planes: [Plane; 6], sphere: &Vec3, radius: f32, intersect_far: bool) -> bool {
+    let sphere_center = sphere.extend(1.0);
+    let max = if intersect_far { 6 } else { 5 };
+    for plane in &planes[..max] {
+        if plane.normal_d().dot(sphere_center) + radius <= 0.0 {
+            return false;
+        }
+    }
+    true
+}
+
+
 pub fn extract_sprites(
     mut extracted_sprites: ResMut<ExtractedSprites>,
     texture_atlases: Extract<Res<Assets<TextureAtlas>>>,
+    cam: Extract<Query<(&Camera, &GlobalTransform, &Frustum)>>,
     sprite_query: Extract<
         Query<(
             Entity,
@@ -335,46 +351,64 @@ pub fn extract_sprites(
         )>,
     >,
 ) {
+
     extracted_sprites.sprites.clear();
-    for (entity, visibility, sprite, transform, handle) in sprite_query.iter() {
-        if !visibility.is_visible() {
-            continue;
-        }
-        // PERF: we don't check in this function that the `Image` asset is ready, since it should be in most cases and hashing the handle is expensive
-        extracted_sprites.sprites.push(ExtractedSprite {
-            entity,
-            color: sprite.color,
-            transform: *transform,
-            rect: sprite.rect,
-            // Pass the custom size
-            custom_size: sprite.custom_size,
-            flip_x: sprite.flip_x,
-            flip_y: sprite.flip_y,
-            image_handle_id: handle.id(),
-            anchor: sprite.anchor.as_vec(),
-        });
-    }
-    for (entity, visibility, atlas_sprite, transform, texture_atlas_handle) in atlas_query.iter() {
-        if !visibility.is_visible() {
-            continue;
-        }
-        if let Some(texture_atlas) = texture_atlases.get(texture_atlas_handle) {
-            let rect = Some(texture_atlas.textures[atlas_sprite.index]);
+
+    for( cam, cam_transform, frustum ) in cam.iter() {
+        
+
+        for (entity, visibility, sprite, transform, handle) in sprite_query.iter() {
+            if !visibility.is_visible() {
+                continue;
+            }
+            // PERF: we don't check in this function that the `Image` asset is ready, since it should be in most cases and hashing the handle is expensive
             extracted_sprites.sprites.push(ExtractedSprite {
                 entity,
-                color: atlas_sprite.color,
+                color: sprite.color,
                 transform: *transform,
-                // Select the area in the texture atlas
-                rect,
+                rect: sprite.rect,
                 // Pass the custom size
-                custom_size: atlas_sprite.custom_size,
-                flip_x: atlas_sprite.flip_x,
-                flip_y: atlas_sprite.flip_y,
-                image_handle_id: texture_atlas.texture.id(),
-                anchor: atlas_sprite.anchor.as_vec(),
+                custom_size: sprite.custom_size,
+                flip_x: sprite.flip_x,
+                flip_y: sprite.flip_y,
+                image_handle_id: handle.id(),
+                anchor: sprite.anchor.as_vec(),
             });
         }
+        for (entity, visibility, atlas_sprite, transform, texture_atlas_handle) in atlas_query.iter() {
+            if !visibility.is_visible() {
+                continue;
+            }
+
+            let pos = transform.translation();
+
+            let visible = intersects_sphere( frustum.planes, &pos, 16.0, false);
+
+            if visible {
+                if let Some(texture_atlas) = texture_atlases.get(texture_atlas_handle) {
+                let rect = Some(texture_atlas.textures[atlas_sprite.index]);
+                extracted_sprites.sprites.push(ExtractedSprite {
+                    entity,
+                    color: atlas_sprite.color,
+                    transform: *transform,
+                    // Select the area in the texture atlas
+                    rect,
+                    // Pass the custom size
+                    custom_size: atlas_sprite.custom_size,
+                    flip_x: atlas_sprite.flip_x,
+                    flip_y: atlas_sprite.flip_y,
+                    image_handle_id: texture_atlas.texture.id(),
+                    anchor: atlas_sprite.anchor.as_vec(),
+                });
+            }
+            } else {
+                //print!("Invisible")
+            }
+
+        }
+
     }
+
 }
 
 #[repr(C)]
