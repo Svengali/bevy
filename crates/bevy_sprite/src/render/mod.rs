@@ -355,7 +355,7 @@ pub fn extract_sprites(
     >,
 ) {
 
-    extracted_sprites.sprites.clear();
+    //extracted_sprites.sprites.clear();
 
     for( cam, cam_transform, frustum ) in cam.iter() {
         
@@ -643,9 +643,13 @@ pub fn queue_sprites(
             // Batches are merged later (in `batch_phase_system()`), so that they can be interrupted
             // by any other phase item (and they can interrupt other items from batching).
             for extracted_sprite in extracted_sprites.iter() {
+
+                /*
                 if !view_entities.contains(extracted_sprite.entity.index() as usize) {
                     continue;
                 }
+                */
+                
                 let new_batch = SpriteBatch {
                     image_handle_id: extracted_sprite.image_handle_id,
                     colored: extracted_sprite.color != Color::WHITE,
@@ -773,6 +777,8 @@ pub fn queue_sprites(
         sprite_meta
             .colored_vertices
             .write_buffer(&render_device, &render_queue);
+
+        extracted_sprites.clear();
     }
 }
 
