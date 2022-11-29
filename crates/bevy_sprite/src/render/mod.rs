@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, cell::Cell};
 
 use crate::{
     texture_atlas::{TextureAtlas, TextureAtlasSprite},
@@ -36,6 +36,8 @@ use bevy_utils::FloatOrd;
 use bevy_utils::HashMap;
 use bytemuck::{Pod, Zeroable};
 use fixedbitset::FixedBitSet;
+
+use thread_local::ThreadLocal;
 
 #[derive(Resource)]
 pub struct SpritePipeline {
@@ -329,6 +331,7 @@ pub fn intersects_sphere(planes: [Plane; 6], sphere: &Vec3, radius: f32, interse
 
 
 pub fn extract_sprites(
+    mut thread_sprites: Local<ThreadLocal<Cell<Vec<ExtractedSprite>>>>,
     mut extracted_sprites: ResMut<ExtractedSprites>,
     texture_atlases: Extract<Res<Assets<TextureAtlas>>>,
     cam: Extract<Query<(&Camera, &GlobalTransform, &Frustum)>>,
@@ -375,7 +378,60 @@ pub fn extract_sprites(
                 anchor: sprite.anchor.as_vec(),
             });
         }
-        for (entity, visibility, atlas_sprite, transform, texture_atlas_handle) in atlas_query.iter() {
+
+        atlas_query.par_for_each(4096, |(
+            entity, 
+            visibility, 
+            atlas_sprite, 
+            transform, 
+            texture_atlas_handle
+        )| {
+
+            let pos = transform.translation();
+
+            let visible = intersects_sphere( frustum.planes, &pos, 16.0, false);
+
+            if visible && visibility.is_visible() {
+                if let Some(texture_atlas) = texture_atlases.get(texture_atlas_handle) {
+                    let rect = Some(texture_atlas.textures[atlas_sprite.index]);
+
+                    let sprite = ExtractedSprite {
+                            entity,
+                            color: atlas_sprite.color,
+                            transform: *transform,
+                            // Select the area in the texture atlas
+                            rect,
+                            // Pass the custom size
+                            custom_size: atlas_sprite.custom_size,
+                            flip_x: atlas_sprite.flip_x,
+                            flip_y: atlas_sprite.flip_y,
+                            image_handle_id: texture_atlas.texture.id(),
+                            anchor: atlas_sprite.anchor.as_vec(),
+                    };
+                    
+                    let cell = thread_sprites.get_or_default();
+                    let mut queue = cell.take();
+                    queue.push(sprite);
+                    cell.set(queue); 
+                }
+            }
+
+
+        });
+
+        for cell in thread_sprites.iter_mut() {
+            //extracted_sprites.sprites.push(cell.get_mut());
+            extracted_sprites.sprites.append(cell.get_mut());
+        }
+
+        /*
+        for (
+            entity, 
+            visibility, 
+            atlas_sprite, 
+            transform, 
+            texture_atlas_handle
+        ) in atlas_query.iter() {
             if !visibility.is_visible() {
                 continue;
             }
@@ -406,6 +462,8 @@ pub fn extract_sprites(
             }
 
         }
+        */
+
 
     }
 
