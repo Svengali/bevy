@@ -123,7 +123,7 @@ impl ComputedVisibility {
     }
 
     #[inline]
-    fn reset(&mut self, visible_in_hierarchy: bool) {
+    pub fn reset(&mut self, visible_in_hierarchy: bool) {
         self.flags = if visible_in_hierarchy {
             ComputedVisibilityFlags::VISIBLE_IN_HIERARCHY
         } else {
