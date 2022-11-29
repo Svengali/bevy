@@ -67,7 +67,7 @@ pub struct App {
     /// the application's event loop and advancing the [`Schedule`].
     /// Typically, it is not configured manually, but set by one of Bevy's built-in plugins.
     /// See `bevy::winit::WinitPlugin` and [`ScheduleRunnerPlugin`](crate::schedule_runner::ScheduleRunnerPlugin).
-    pub runner: Box<dyn Fn(App)>,
+    pub runner: Box<dyn Fn(App) + Send>, // Send bound is required to make App Send
     /// A container of [`Stage`]s set to be run in a linear order.
     pub schedule: Schedule,
     sub_apps: HashMap<AppLabelId, SubApp>,
@@ -86,9 +86,22 @@ impl Debug for App {
 }
 
 /// Each `SubApp` has its own [`Schedule`] and [`World`], enabling a separation of concerns.
-struct SubApp {
-    app: App,
-    runner: Box<dyn Fn(&mut World, &mut App)>,
+pub struct SubApp {
+    /// The [`SubApp`]'s instance of [`App`]
+    pub app: App,
+    extract: Box<dyn Fn(&mut World, &mut App) + Send>,
+}
+
+impl SubApp {
+    /// run the `SubApp`'s schedule
+    pub fn run(&mut self) {
+        self.app.schedule.run(&mut self.app.world);
+    }
+
+    /// extract data from main world to sub app
+    pub fn extract(&mut self, main_world: &mut World) {
+        (self.extract)(main_world, &mut self.app);
+    }
 }
 
 impl Debug for SubApp {
@@ -147,11 +160,14 @@ impl App {
     ///
     /// See [`add_sub_app`](Self::add_sub_app) and [`run_once`](Schedule::run_once) for more details.
     pub fn update(&mut self) {
-        #[cfg(feature = "trace")]
-        let _bevy_frame_update_span = info_span!("frame").entered();
-        self.schedule.run(&mut self.world);
+        {
+            #[cfg(feature = "trace")]
+            let _bevy_frame_update_span = info_span!("main app").entered();
+            self.schedule.run(&mut self.world);
+        }
         for sub_app in self.sub_apps.values_mut() {
-            (sub_app.runner)(&mut self.world, &mut sub_app.app);
+            sub_app.extract(&mut self.world);
+            sub_app.run();
         }
     }
 
@@ -164,6 +180,14 @@ impl App {
         let _bevy_app_run_span = info_span!("bevy_app").entered();
 
         let mut app = std::mem::replace(self, App::empty());
+
+        // temporarily remove the plugin registry to run each plugin's setup function on app.
+        let mut plugin_registry = std::mem::take(&mut app.plugin_registry);
+        for plugin in &plugin_registry {
+            plugin.setup(&mut app);
+        }
+        std::mem::swap(&mut app.plugin_registry, &mut plugin_registry);
+
         let runner = std::mem::replace(&mut app.runner, Box::new(run_once));
         (runner)(app);
     }
@@ -799,7 +823,7 @@ impl App {
     /// App::new()
     ///     .set_runner(my_runner);
     /// ```
-    pub fn set_runner(&mut self, run_fn: impl Fn(App) + 'static) -> &mut Self {
+    pub fn set_runner(&mut self, run_fn: impl Fn(App) + 'static + Send) -> &mut Self {
         self.runner = Box::new(run_fn);
         self
     }
@@ -983,20 +1007,21 @@ impl App {
 
     /// Adds an [`App`] as a child of the current one.
     ///
-    /// The provided function `f` is called by the [`update`](Self::update) method. The [`World`]
+    /// The provided function `extract` is normally called by the [`update`](Self::update) method.
+    /// After extract is called, the [`Schedule`] of the sub app is run. The [`World`]
     /// parameter represents the main app world, while the [`App`] parameter is just a mutable
     /// reference to the `SubApp` itself.
     pub fn add_sub_app(
         &mut self,
         label: impl AppLabel,
         app: App,
-        sub_app_runner: impl Fn(&mut World, &mut App) + 'static,
+        extract: impl Fn(&mut World, &mut App) + 'static + Send,
     ) -> &mut Self {
         self.sub_apps.insert(
             label.as_label(),
             SubApp {
                 app,
-                runner: Box::new(sub_app_runner),
+                extract: Box::new(extract),
             },
         );
         self
@@ -1034,6 +1059,16 @@ impl App {
             Ok(app) => app,
             Err(label) => panic!("Sub-App with label '{:?}' does not exist", label.as_str()),
         }
+    }
+
+    /// Inserts an existing sub app into the app
+    pub fn insert_sub_app(&mut self, label: impl AppLabel, sub_app: SubApp) {
+        self.sub_apps.insert(label.as_label(), sub_app);
+    }
+
+    /// Removes a sub app from the app. Returns None if the label doesn't exist.
+    pub fn remove_sub_app(&mut self, label: impl AppLabel) -> Option<SubApp> {
+        self.sub_apps.remove(&label.as_label())
     }
 
     /// Retrieves a `SubApp` inside this [`App`] with the given label, if it exists. Otherwise returns
