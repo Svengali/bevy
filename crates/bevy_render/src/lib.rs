@@ -211,7 +211,7 @@ impl Plugin for RenderPlugin {
                     RenderStage::Cleanup,
                     SystemStage::parallel().with_system(clear_entities.at_end()),
                 )
-                .init_resource::<RenderGraph>()
+                .init_resource::<render_graph::RenderGraph>()
                 .insert_resource(RenderInstance(instance))
                 .insert_resource(device)
                 .insert_resource(queue)

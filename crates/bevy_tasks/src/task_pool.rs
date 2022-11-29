@@ -405,7 +405,7 @@ impl<'scope, 'env, T: Send + 'scope> Scope<'scope, 'env, T> {
     ///
     /// For more information, see [`TaskPool::scope`].
     pub fn spawn<Fut: Future<Output = T> + 'scope + Send>(&self, f: Fut) {
-        let task = self.executor.spawn(f).fallible();
+        let task = self.executor.spawn(f); //.fallible();
         // ConcurrentQueue only errors when closed or full, but we never
         // close and use an unbouded queue, so it is safe to unwrap
         self.spawned.push(task).unwrap();
