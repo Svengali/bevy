@@ -6,7 +6,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use async_task::FallibleTask;
+//use async_task::FallibleTask;
 use concurrent_queue::ConcurrentQueue;
 use futures_lite::{future, FutureExt};
 

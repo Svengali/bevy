@@ -9,9 +9,13 @@ pub fn sync_simple_transforms(
         (Changed<Transform>, Without<Parent>, Without<Children>),
     >,
 ) {
-    query.par_for_each_mut(1024, |(transform, mut global_transform)| {
+    let _x1 = 0;
+
+    query.par_for_each_mut(512, |(transform, mut global_transform)| {
         *global_transform = GlobalTransform::from(*transform);
     });
+
+    let _x2 = 0;
 }
 
 /// Update [`GlobalTransform`] component of entities based on entity hierarchy and

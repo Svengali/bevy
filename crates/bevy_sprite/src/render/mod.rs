@@ -14,7 +14,6 @@ use bevy_math::{Rect, Vec2, Vec3};
 use bevy_reflect::Uuid;
 use bevy_render::{
     color::Color,
-    primitives::{Sphere},
     render_asset::RenderAssets,
     render_phase::{
         BatchedPhaseItem, DrawFunctions, EntityRenderCommand, RenderCommand, RenderCommandResult,
@@ -31,7 +30,7 @@ use bevy_render::{
     },
     Extract, prelude::Camera, primitives::{Frustum, Plane},
 };
-use bevy_transform::{components::GlobalTransform, prelude::Transform};
+use bevy_transform::{components::GlobalTransform};
 use bevy_utils::FloatOrd;
 use bevy_utils::HashMap;
 use bytemuck::{Pod, Zeroable};
@@ -357,7 +356,7 @@ pub fn extract_sprites(
 
     //extracted_sprites.sprites.clear();
 
-    for( cam, cam_transform, frustum ) in cam.iter() {
+    for( _cam, _cam_transform, frustum ) in cam.iter() {
         
 
         for (entity, visibility, sprite, transform, handle) in sprite_query.iter() {

@@ -388,7 +388,7 @@ impl RenderGraph {
         output_node: impl Into<NodeLabel>,
         input_node: impl Into<NodeLabel>,
     ) {
-        self.try_add_node_edge(output_node, input_node); //.unwrap();
+        let _res = self.try_add_node_edge(output_node, input_node);
     }
 
     /// Removes the [`Edge::NodeEdge`] from the graph. If either node does not exist then nothing
